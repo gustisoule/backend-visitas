@@ -1,58 +1,59 @@
 import { createClient } from '@supabase/supabase-js';
 
 export default async function handler(req, res) {
-    // Permitir peticiones CORS desde cualquier origen (tu web en surge.sh)
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // Configurar CORS para permitir peticiones desde cualquier origen (o tu portafolio)[cite: 1]
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
+  // Responder inmediatamente a las peticiones de verificación OPTIONS
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  // Permitir solo métodos POST si lo deseas
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Método no permitido' });
+  }
+
+  try {
+    // Inicializar Supabase con las variables de entorno de Vercel
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
+
+    // Obtener datos del cliente (opcional, si los mandas desde el frontend)
+    const { page, navegador } = req.body || {};
+
+    // 1. Guardar en Supabase (ajusta el nombre de tu tabla, por ejemplo 'visitas')
+    const { data, error: dbError } = await supabase
+      .from('visitas')
+      .insert([{ page: page || 'Portafolio', navegador: navegador || req.headers['user-agent'] }]);
+
+    if (dbError) {
+      console.error('Error en Supabase:', dbError);
     }
 
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
+    // 2. Enviar notificación a Telegram
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.TELEGRAM_CHAT_ID;
+    
+    if (botToken && chatId) {
+      const mensaje = `🚀 ¡Nueva visita en tu portafolio!\n🌐 Página: ${page || 'Inicio'}`;
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: mensaje,
+        }),
+      });
     }
 
-    try {
-        const visitData = req.body;
-
-        // 1. Inicializar Supabase con las credenciales secretas
-        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-
-        // 2. Guardar en la base de datos
-        const { error: dbError } = await supabase
-            .from('visitas')
-            .insert([visitData]);
-
-        if (dbError) console.error('Error en BD:', dbError);
-
-        // 3. Formatear el mensaje para Telegram
-        const mensaje = `🚨 ¡Nueva visita en tu portafolio! 🚨\n\n` +
-                        `🌍 *Ubicación:* ${visitData.ciudad}, ${visitData.region}, ${visitData.pais}\n` +
-                        `🌐 *IP:* ${visitData.ip}\n` +
-                        `💻 *Plataforma:* ${visitData.plataforma}\n` +
-                        `📱 *Dispositivo:* ${visitData.dispositivo}\n` +
-                        `📐 *Pantalla:* ${visitData.pantalla}\n` +
-                        `⏰ *Hora:* ${new Date(visitData.timestamp).toLocaleString()}`;
-
-        // 4. Enviar notificación al Bot de Telegram
-        const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-        const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: TELEGRAM_CHAT_ID,
-                text: mensaje,
-                parse_mode: 'Markdown'
-            })
-        });
-
-        return res.status(200).json({ success: true, message: 'Registrado correctamente' });
-    } catch (err) {
-        console.error('Error general:', err);
-        return res.status(500).json({ error: 'Internal server error' });
-    }
+    return res.status(200).json({ success: true, message: 'Visita registrada correctamente' });
+  } catch (error) {
+    console.error('Error general en el servidor:', error);
+    return res.status(500).json({ error: error.message });
+  }
 }
